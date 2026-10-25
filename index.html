@@ -122,6 +122,18 @@ select{
 table.pt{width:100%; border-collapse:collapse; margin-top:.8rem; font-size:.92rem}
 table.pt th,table.pt td{text-align:left; padding:.35rem .4rem; border-bottom:1px solid var(--line)}
 
+/* sync card */
+details.card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:.2rem .8rem .7rem; margin:.6rem 0}
+details.card summary{cursor:pointer; list-style:none; padding:.5rem 0}
+details.card summary::-webkit-details-marker{display:none}
+details.card summary b{margin-right:.4rem}
+.syncstat.err{color:var(--warn)}
+.card label{display:block; font-size:.85rem; color:var(--muted); margin:.5rem 0 .2rem}
+.card input{
+  width:100%; min-height:44px; font:inherit; color:var(--ink); background:var(--input);
+  border:1px solid var(--line); border-radius:10px; padding:.4rem .6rem;
+}
+
 #toast{
   position:fixed; left:50%; bottom:calc(1.2rem + env(safe-area-inset-bottom)); transform:translateX(-50%);
   background:var(--ink); color:var(--bg); padding:.6rem 1rem; border-radius:999px; font-size:.92rem;
@@ -414,6 +426,7 @@ function renderHistory(){
     '<div class="stat"><b>' + week + '</b><span class="muted">last 7 days</span></div>' +
     '<div class="stat"><b>' + vol.toLocaleString() + '</b><span class="muted">lb volume</span></div></div>' +
     banner +
+    syncCardHTML() +
     '<div class="tools">' +
       '<button class="small" data-act="exportjson">Export JSON</button>' +
       '<button class="small" data-act="exportcsv">Export CSV</button>' +
@@ -565,13 +578,134 @@ function importJSON(file){
       const have = new Set(sessions.map(s => s.id));
       let added = 0;
       incoming.forEach(s => {
-        if(s && s.id && s.startedAt && Array.isArray(s.exercises) && !have.has(s.id)){ sessions.push(s); have.add(s.id); added++; }
+        if(s && s.id && s.startedAt && Array.isArray(s.exercises) && !have.has(s.id)){
+          sessions.push(s); have.add(s.id); added++; pending[s.id] = true;
+        }
       });
-      sortSessions(); persistSessions(); render();
+      sortSessions(); persistSessions(); savePending(); render(); syncSoon();
       toast('Imported ' + added + ' new session' + (added === 1 ? '' : 's'));
     }catch(err){ toast('Could not read that file'); }
   };
   fr.readAsText(file);
+}
+
+/* ---------- Sync (optional; talks to your own server) ---------- */
+const KEY_SYNC = 'hyp.sync.v1';
+const KEY_PENDING = 'hyp.pending.v1';
+const KEY_TOMB = 'hyp.tomb.v1';
+let syncCfg = load(KEY_SYNC, null);
+let pending = load(KEY_PENDING, {});
+let tomb = load(KEY_TOMB, []);
+if(!pending || typeof pending !== 'object' || Array.isArray(pending)) pending = {};
+if(!Array.isArray(tomb)) tomb = [];
+const syncState = { busy:false, msg:'', err:false, lastAttempt:0 };
+
+const savePending = () => save(KEY_PENDING, pending);
+const saveTomb = () => save(KEY_TOMB, tomb);
+const saveCfg = () => save(KEY_SYNC, syncCfg);
+const pendingCount = () => Object.keys(pending).length + tomb.length;
+const syncConfigured = () => !!(syncCfg && syncCfg.url && syncCfg.token);
+const normUrl = u => String(u || '').trim().replace(/\/+$/, '');
+
+function setSyncStatus(msg, err){
+  syncState.msg = msg; syncState.err = !!err;
+  const el = $('#syncStat');
+  if(el){ el.textContent = msg; el.classList.toggle('err', !!err); }
+}
+
+function mergeIncoming(list, deletedIds){
+  let changed = false;
+  const idx = new Map(sessions.map((s, i) => [s.id, i]));
+  list.forEach(s => {
+    if(!s || !s.id || !s.startedAt || !Array.isArray(s.exercises)) return;
+    if(!idx.has(s.id)){ sessions.push(s); changed = true; }
+    else {
+      const cur = sessions[idx.get(s.id)];
+      if((s.updatedAt || s.finishedAt || '') > (cur.updatedAt || cur.finishedAt || '')){ sessions[idx.get(s.id)] = s; changed = true; }
+    }
+  });
+  if(deletedIds.length){
+    const del = new Set(deletedIds);
+    const before = sessions.length;
+    sessions = sessions.filter(s => !del.has(s.id));
+    deletedIds.forEach(id => { delete pending[id]; });
+    savePending();
+    if(sessions.length !== before) changed = true;
+  }
+  if(changed){ sortSessions(); persistSessions(); }
+  return changed;
+}
+
+async function syncNow(manual){
+  if(!syncConfigured() || syncState.busy) return;
+  syncState.busy = true;
+  syncState.lastAttempt = Date.now();
+  setSyncStatus('Syncing…', false);
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 10000);
+  try{
+    const byId = new Map(sessions.map(s => [s.id, s]));
+    const pushedIds = Object.keys(pending);
+    const body = {
+      since: syncCfg.lastPull || null,
+      sessions: pushedIds.map(id => byId.get(id)).filter(Boolean),
+      deleted: tomb.slice()
+    };
+    const res = await fetch(syncCfg.url + '/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + syncCfg.token },
+      body: JSON.stringify(body),
+      signal: ctl.signal
+    });
+    if(res.status === 401) throw new Error('Token rejected by the server');
+    if(!res.ok) throw new Error('Server error ' + res.status);
+    const data = await res.json();
+    pushedIds.forEach(id => { delete pending[id]; });
+    tomb = tomb.filter(id => body.deleted.indexOf(id) === -1);
+    savePending(); saveTomb();
+    const changed = mergeIncoming(data.sessions || [], data.deleted || []);
+    syncCfg.lastPull = data.serverTime;
+    syncCfg.lastSync = Date.now();
+    saveCfg();
+    setSyncStatus('Synced ' + timeOf(new Date(syncCfg.lastSync).toISOString()), false);
+    if(changed && view !== 'workout') render();
+    if(manual) toast('Synced');
+  }catch(err){
+    let msg = err && err.message ? err.message : 'Sync failed';
+    if(err && err.name === 'AbortError') msg = 'Server not reachable (timed out). Is Tailscale connected?';
+    else if((err && err.name === 'TypeError') || /failed to fetch|networkerror|load failed/i.test(msg)) msg = 'Server not reachable. Is Tailscale connected?';
+    const n = pendingCount();
+    setSyncStatus(msg + (n ? ' · ' + n + ' waiting to upload' : ''), true);
+    if(manual) toast('Sync failed');
+  }finally{
+    clearTimeout(timer);
+    syncState.busy = false;
+  }
+}
+function syncSoon(){
+  if(!syncConfigured()) return;
+  clearTimeout(syncSoon._t);
+  syncSoon._t = setTimeout(() => syncNow(false), 400);
+}
+
+function syncCardHTML(){
+  const cfg = syncCfg;
+  const n = pendingCount();
+  const status = syncState.msg ||
+    (cfg ? (cfg.lastSync ? 'Last synced ' + timeOf(new Date(cfg.lastSync).toISOString()) : 'Not synced yet')
+         : 'Not connected — data stays on this device');
+  return '<details class="card"' + (cfg ? '' : ' open') + '><summary><b>Sync</b>' +
+    '<span class="muted syncstat' + (syncState.err ? ' err' : '') + '" id="syncStat">' + esc(status) + '</span></summary>' +
+    '<label for="syncUrl">Server URL</label>' +
+    '<input type="url" id="syncUrl" placeholder="https://minidesk.your-tailnet.ts.net:8443" value="' + esc(cfg ? cfg.url : '') + '" autocomplete="off" autocapitalize="off" spellcheck="false">' +
+    '<label for="syncToken">Access token</label>' +
+    '<input type="password" id="syncToken" value="' + esc(cfg ? cfg.token : '') + '" autocomplete="off" autocapitalize="off" spellcheck="false">' +
+    '<div class="tools"><button class="small primary" data-act="syncsave">Save &amp; sync</button>' +
+    (cfg ? '<button class="small" data-act="syncnow">Sync now</button><button class="small danger" data-act="syncoff">Disconnect</button>' : '') +
+    '</div>' +
+    '<p class="muted" style="margin:.2rem 0 0">Sessions sync to your own server and need Tailscale connected on this device. ' +
+    'Anything saved while offline is queued' + (n ? ' (' + n + ' waiting now)' : '') + ' and uploads on the next successful sync. In-progress drafts stay on this device.</p>' +
+    '</details>';
 }
 
 /* ---------- Finish / discard ---------- */
@@ -592,15 +726,18 @@ function finishSession(){
   const started = d.startedAt || now.toISOString();
   const rec = {
     id: uid(), day: p.day, dayName: p.name, date: localDate(new Date(started)),
-    startedAt: started, finishedAt: now.toISOString(), notes: d.notes.trim(), exercises: exs
+    startedAt: started, finishedAt: now.toISOString(), updatedAt: now.toISOString(),
+    notes: d.notes.trim(), exercises: exs
   };
   sessions.push(rec); sortSessions();
   const ok = persistSessions();
+  pending[rec.id] = true; savePending();
   delete drafts[dayIdx]; persistDrafts();
   view = 'workout';
   render();
   window.scrollTo(0, 0);
   toast(ok ? 'Session saved' : 'Saved in memory only — storage blocked, export now');
+  syncSoon();
 }
 
 /* ---------- Events ---------- */
@@ -682,10 +819,41 @@ document.addEventListener('click', e => {
   if(act === 'importjson'){ const f = $('#importFile'); if(f) f.click(); return; }
   if(act === 'delsess'){
     if(confirm('Delete this session permanently?')){
-      sessions = sessions.filter(s => s.id !== b.dataset.id);
-      persistSessions(); render(); toast('Session deleted');
+      const id = b.dataset.id;
+      sessions = sessions.filter(s => s.id !== id);
+      delete pending[id]; savePending();
+      if(syncConfigured() && tomb.indexOf(id) === -1){ tomb.push(id); saveTomb(); }
+      persistSessions(); render(); toast('Session deleted'); syncSoon();
+    }
+    return;
+  }
+  if(act === 'syncsave'){
+    const url = normUrl($('#syncUrl').value), token = $('#syncToken').value.trim();
+    if(!url || !token){ toast('Enter both the server URL and token'); return; }
+    if(!/^https:\/\//i.test(url) && location.protocol === 'https:'){ toast('URL must start with https://'); return; }
+    if(!/^https?:\/\//i.test(url)){ toast('URL must start with https://'); return; }
+    const fresh = !syncCfg || syncCfg.url !== url;
+    syncCfg = { url, token, lastPull: fresh ? null : syncCfg.lastPull, lastSync: fresh ? 0 : syncCfg.lastSync };
+    if(fresh){ sessions.forEach(s => { pending[s.id] = true; }); savePending(); }
+    saveCfg(); syncState.msg = ''; syncState.err = false;
+    render(); syncNow(true);
+    return;
+  }
+  if(act === 'syncnow'){ syncNow(true); return; }
+  if(act === 'syncoff'){
+    if(confirm('Disconnect sync on this device? Your local data stays.')){
+      try{ localStorage.removeItem(KEY_SYNC); }catch(err){}
+      syncCfg = null; pending = {}; tomb = []; savePending(); saveTomb();
+      syncState.msg = ''; syncState.err = false;
+      render(); toast('Sync disconnected');
     }
   }
+});
+
+// Sync on load, when the connection returns, and when the app comes back to the foreground.
+window.addEventListener('online', () => syncNow(false));
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible' && syncConfigured() && Date.now() - syncState.lastAttempt > 30000) syncNow(false);
 });
 
 // Console access for ad-hoc analysis: HypLog.sessions(), HypLog.csv()
@@ -693,6 +861,7 @@ window.HypLog = { sessions: () => sessions, csv: toCSV, program: PROGRAM };
 
 render();
 if(!storageOK) toast('Browser storage unavailable — sessions will not persist');
+syncSoon();
 })();
 </script>
 </body>
