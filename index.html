@@ -69,6 +69,7 @@ nav.top button.on{background:var(--accent); color:var(--accent-ink); border-colo
 .ex-h h3{font-size:1.05rem}
 .rx{font-weight:700; color:var(--accent)}
 .hint{width:100%; font-size:.85rem; color:var(--muted); font-style:italic}
+.cue{width:100%; margin-top:.35rem; padding:.4rem .6rem; border-left:4px solid var(--warn); background:var(--chip); border-radius:6px; font-size:.9rem; font-weight:600}
 .last{font-size:.82rem; color:var(--muted); margin:.35rem 0 .5rem}
 .set{
   display:grid; grid-template-columns:2rem 1fr 1fr 3.4rem; gap:.5rem; align-items:center;
@@ -156,60 +157,64 @@ details.card summary b{margin-right:.4rem}
 function slug(s){ return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''); }
 function X(name, sets, reps, o){
   o = o || {};
-  return { id: slug(name), name, sets, reps, unit: o.unit || 'reps', note: o.note || '', core: !!o.core };
+  // o.id lets a renamed exercise keep its logged history; o.cue is a form reminder shown prominently
+  return { id: o.id || slug(name), name, sets, reps, unit: o.unit || 'reps', note: o.note || '', cue: o.cue || '', core: !!o.core };
 }
+
+const RDL_CUE = 'Lower only to mid-shin. Stop when the hamstring stretch starts. Back flat, soft knee, never chase the floor.';
+
+const BAND_CUE = 'Check the band for cracks or nicks first (cold makes latex brittle). Never release a stretched handle.';
 
 const PROGRAM = [
   { day:1, name:'Upper A', weekday:'Tuesday', focus:'Heavier, 6–10 reps', warn:'', exercises:[
     X('DB Flat Bench Press',4,'6–8',{note:'2–3 min rest'}),
     X('DB Pullover',3,'10–12'),
+    X('Band Chest Fly',3,'12–15',{note:'Anchor behind you at chest height. Start with the 25–30 lb band. Log band lbs; stacked = sum', cue:BAND_CUE}),
     X('EZ Bar Bent-Over Row',4,'6–8'),
     X('DB Standing Shoulder Press',3,'8–10'),
     X('EZ Bar Curl',3,'8–10',{note:'Superset with EZ Bar Skullcrusher'}),
     X('EZ Bar Skullcrusher',3,'8–10',{note:'Superset with EZ Bar Curl'}),
     X('DB Lateral Raise',3,'12–15',{note:'Slow, 3-1-3 tempo'}),
     X('DB Rear Delt Fly',3,'12–15',{note:'Bent-over or chest-supported on bench'}),
-    X('Sandbag Bear Hug Carry',3,'30–40',{unit:'m'}),
-    X('Traditional Sit-Up',3,'12–15',{core:true,note:'DB on chest for load'}),
-    X('DB Russian Twist',3,'15–20/side',{core:true})
+    X('Sandbag Bear Hug Carry',3,'30–40',{unit:'m'})
   ]},
   { day:2, name:'Lower A', weekday:'Friday', focus:'Heavier, 8–10 reps',
-    warn:'Knee flexion capped at ~90° — no full squats or deep lunges.', exercises:[
-    X('Box Squat to Bench',4,'8–10',{note:'DB goblet hold; bench is the depth stop'}),
-    X('DB Romanian Deadlift',4,'8–10',{note:'Hip hinge, soft knees'}),
-    X('DB Sumo Romanian Deadlift',3,'10–12',{note:'Wide stance, toes out'}),
+    warn:'Knee flexion capped at ~90°. On RDLs, stop at mid-shin.', exercises:[
+    X('EZ Bar Front Squat',4,'8–10',{id:'box-squat-to-bench',
+      note:'Bench behind you as the depth stop (90° max); 3-sec lower',
+      cue:'If a rep stalls, drop the bar forward and step back. Never grind it.'}),
+    X('DB Romanian Deadlift',4,'8–10',{note:'Hip hinge, soft knees', cue:RDL_CUE}),
+    X('DB Sumo Romanian Deadlift',3,'10–12',{note:'Wide stance, toes out', cue:RDL_CUE}),
     X('DB Step-Up, Low Step',3,'10–12/leg',{note:'6–10 in step; knee stays under 90°'}),
     X('Sandbag Good Morning',3,'10–12',{note:'Hip hinge, soft knees'}),
     X('Standing Calf Raise',4,'15–20',{note:'DB in hand'}),
-    X('Sandbag Farmer/Bear Hug Carry',3,'40',{unit:'m'}),
-    X('Sit-Up, Legs on Bench',3,'12–15',{core:true,note:'Feet up, knees bent 90°'}),
-    X('Sandbag Russian Twist',3,'15–20/side',{core:true})
+    X('Sandbag Farmer/Bear Hug Carry',3,'40',{unit:'m'})
   ]},
   { day:3, name:'Upper B', weekday:'Saturday', focus:'Higher rep, 10–15, different angles', warn:'', exercises:[
     X('DB Incline Press',4,'10–12',{note:'Prop the bench'}),
     X('DB Decline Press',3,'10–12',{note:'Elevate bench foot end on plates'}),
     X('DB Arnold Press',3,'10–12'),
     X('DB One-Arm Row',4,'10–12/arm'),
+    X('Band Lat Pulldown',3,'12–15',{note:'Anchor overhead, kneel facing it, pull handles to upper chest. Start with the 30 lb band; stack a second if easy. Log band lbs', cue:BAND_CUE}),
     X('EZ Bar Upright Row',3,'12–15',{note:'Superset with DB Shrug'}),
     X('DB Shrug',3,'12–15',{note:'Superset with EZ Bar Upright Row'}),
     X('DB Side-Lying Lateral Raise',3,'12–15/side'),
+    X('Band Face Pull',3,'15–20',{note:'Anchor at face height. 15–20 lb band. Pull to ears, elbows high, rotate hands back. Log band lbs', cue:BAND_CUE}),
     X('DB Hammer Curl',3,'12–15'),
     X('DB Overhead Triceps Extension',3,'12–15',{note:'Two-hand'}),
-    X('Sandbag Shouldering',3,'8/side',{note:'Alternate sides'}),
-    X('Weighted Decline-Style Sit-Up',3,'10–12',{core:true,note:'Feet hooked under bench, DB on chest'}),
-    X('DB Russian Twist',3,'15–20/side',{core:true})
+    X('Sandbag Shouldering',3,'8/side',{note:'Alternate sides'})
   ]},
-  { day:4, name:'Lower B', weekday:'Sunday', focus:'Posterior chain + isometric quad work',
-    warn:'Same 90° cap — hip-hinge patterns instead of squats/lunges.', exercises:[
-    X('DB Single-Leg RDL',4,'10–12/leg'),
+  { day:4, name:'Lower B', weekday:'Sunday', focus:'Posterior chain + quad volume',
+    warn:'Same 90° cap on every squat, step-up, and extension. On RDLs, stop at mid-shin.', exercises:[
+    X('DB Single-Leg RDL',4,'10–12/leg',{cue:RDL_CUE}),
     X('Sandbag Deadlift',4,'8–10',{note:'Shins vertical, hips back'}),
     X('Hip Thrust',4,'10–12',{note:'DB or sandbag on hips, shoulders on bench'}),
     X('Single-Leg Glute Bridge',3,'12–15/leg'),
-    X('Wall Sit',3,'30–45',{unit:'sec',note:'DB on lap; hold at 90° or shallower'}),
+    X('DB Step-Up, Moderate Step',3,'10–12/leg',{note:'Step height: thigh parallel at most. Torso upright, 3-sec lower'}),
+    X('DB Seated Leg Extension',3,'15–20',{note:'Sit on bench edge, DB held between feet. 2-sec squeeze at top, 3-sec lower'}),
+    X('Sandbag Bear Hug Squat to Bench',3,'15–20',{note:'Heels on a 5 lb plate or board for quad bias. Touch the bench, 90° max, 3-sec lower'}),
     X('Single-Leg Calf Raise',3,'15–20/leg'),
-    X('Sandbag Farmer Carry',3,'40',{unit:'m'}),
-    X('Cross-Body Sit-Up',3,'12–15/side',{core:true,note:'Twist to opposite knee'}),
-    X('Sandbag Russian Twist',3,'15–20/side',{core:true})
+    X('Sandbag Farmer Carry',3,'40',{unit:'m'})
   ]}
 ];
 
@@ -357,7 +362,8 @@ function exerciseHTML(e, d){
   }).join('');
   return '<section class="ex" data-ex="' + e.id + '">' +
     '<div class="ex-h"><h3>' + esc(e.name) + '</h3><div class="rx">' + esc(rx(e)) + '</div>' +
-      (e.note ? '<div class="hint">' + esc(e.note) + '</div>' : '') + '</div>' +
+      (e.note ? '<div class="hint">' + esc(e.note) + '</div>' : '') +
+      (e.cue ? '<div class="cue">' + esc(e.cue) + '</div>' : '') + '</div>' +
     '<div class="last">' + esc(lastTxt) + '</div>' +
     '<div class="set head"><span></span><span>lbs</span><span>' + col + '</span><span>Done</span></div>' +
     rows +
@@ -385,7 +391,7 @@ function renderWorkout(){
     (p.warn ? '<div class="warn">' + esc(p.warn) + '</div>' : '') +
     '<div class="muted" id="startedLbl">' + (d.startedAt ? 'Started ' + timeOf(d.startedAt) : 'Not started — the clock starts on your first entry') + '</div></div>' +
     main +
-    '<div class="section-title">Core finisher</div>' + core +
+    (core ? '<div class="section-title">Core finisher</div>' + core : '') +
     '<div class="finish">' +
       '<textarea class="exnote" id="sessNote" rows="2" placeholder="Session notes (energy, sleep, knee status, anything worth remembering)…">' + esc(d.notes) + '</textarea>' +
       '<div class="row"><button class="danger" data-act="discard">Discard draft</button>' +
